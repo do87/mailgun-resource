@@ -1,0 +1,74 @@
+#! /bin/sh
+
+set -e;
+
+exec 3>&1 # make stdout available as fd 3 for the result
+exec 1>&2 # redirect all output to stderr for logging
+
+source=$1
+
+payload=$(mktemp /tmp/resource-in.XXXXXX)
+
+cat > $payload <&0
+
+cd $source
+
+key=$(jq -r '.source.mailgun.key // ""' < $payload)
+host=$(jq -r '.source.mailgun.host // ""' < $payload)
+from=$(jq -r '.source.from // ""' < $payload)
+to=$(jq -r '.params.to // ""' < $payload)
+to_committer=$(jq -r '.params.to_committer // ""' < $payload)
+subject=$(jq -r '.params.subject // ""' < $payload)
+body=$(jq -r '.params.body // ""' < $payload)
+
+if [ "$to_committer" == "true" ]; then
+  cd $(dirname ${body});
+  committer=$(git log --format='%ae' HEAD^!);
+  echo ""
+  cd $source;
+fi
+
+sed -i -e 's~\${ATC_EXTERNAL_URL}~'"${ATC_EXTERNAL_URL}"'~g' ${body};
+sed -i -e 's~\$ATC_EXTERNAL_URL~'"${ATC_EXTERNAL_URL}"'~g' ${body};
+sed -i -e 's~\${BUILD_ID}~'"${BUILD_ID}"'~g' ${body};
+sed -i -e 's~\$BUILD_ID~'"${BUILD_ID}"'~g' ${body};
+sed -i -e 's~\${BUILD_NAME}~'"${BUILD_NAME}"'~g' ${body};
+sed -i -e 's~\$BUILD_NAME~'"${BUILD_NAME}"'~g' ${body};
+sed -i -e 's~\${BUILD_PIPELINE_NAME}~'"${BUILD_PIPELINE_NAME}"'~g' ${body};
+sed -i -e 's~\$BUILD_PIPELINE_NAME~'"${BUILD_PIPELINE_NAME}"'~g' ${body};
+sed -i -e 's~\${BUILD_PIPELINE_NAME}~'"${BUILD_PIPELINE_NAME}"'~g' ${body};
+sed -i -e 's~\$BUILD_PIPELINE_NAME~'"${BUILD_PIPELINE_NAME}"'~g' ${body};
+sed -i -e 's~\${BUILD_TEAM_NAME}~'"${BUILD_TEAM_NAME}"'~g' ${body};
+sed -i -e 's~\$BUILD_TEAM_NAME~'"${BUILD_TEAM_NAME}"'~g' ${body};
+sed -i -e 's~\${BUILD_JOB_NAME}~'"${BUILD_JOB_NAME}"'~g' ${body};
+sed -i -e 's~\$BUILD_JOB_NAME~'"${BUILD_JOB_NAME}"'~g' ${body};
+
+function send_to_mailgun {
+  curl -s --user "api:$1" \
+     -F from="$2" \
+     -F to="$3" \
+     -F subject="$4" \
+     --form-string html="$(cat $5)" \
+     $6;
+}
+
+if [ "${committer}" == "" ]; then
+  echo "Couldn't find git committer";
+else
+  echo "Sending email to: ${committer}";
+  send_to_mailgun "$key" "$from" "$committer" "$subject" "$body" "$host"
+fi
+
+if [ "${to}" == "" ]; then
+  echo "'To' not specified in params";
+else
+  echo "Sending email to: ${to}";
+  send_to_mailgun "$key" "$from" "$to" "$subject" "$body" "$host"
+fi
+
+jq -n "{
+ version: {
+   notify: \"${BUILD_NAME}\"
+ },
+ metadata: []
+}" >&3;
